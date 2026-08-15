@@ -8,7 +8,7 @@
  * <script src="aotuv.js"></script>   <-- thêm vào HTML trước script chính
  */
 
-async function encodeWavToOggWithAotuv(pcmInt16Interleaved, numSamplesPerChannel, channels, sampleRate, quality) {
+async function encodeWavToOggWithAotuv(pcmInt16Interleaved, numSamplesPerChannel, channels, sampleRate, mode, quality, nominalBitrate) {
   // AotuvModule được định nghĩa bởi aotuv.js (MODULARIZE=1, EXPORT_NAME=AotuvModule)
   const Module = await AotuvModule();
 
@@ -21,12 +21,14 @@ async function encodeWavToOggWithAotuv(pcmInt16Interleaved, numSamplesPerChannel
   // 2. Cấp phát 4 byte để nhận out_len (int*) qua tham số output
   const outLenPtr = Module._malloc(4);
 
-  // 3. Gọi hàm C. Dùng ccall vì có nhiều kiểu tham số khác nhau.
+  // 3. Gọi hàm C. mode=0 -> dùng "quality" (VBR); mode=1 -> dùng "nominalBitrate" (ABR/managed).
+  //    Tham số không dùng tới (quality khi mode=1, hoặc nominalBitrate khi mode=0) truyền giá trị
+  //    bất kỳ cũng được, phía C sẽ bỏ qua.
   const oggPtr = Module.ccall(
     "aotuv_encode_wav_to_ogg",
     "number",           // return type: con trỏ (number trong JS)
-    ["number", "number", "number", "number", "number", "number"],
-    [pcmPtr, numSamplesPerChannel, channels, sampleRate, quality, outLenPtr]
+    ["number", "number", "number", "number", "number", "number", "number", "number"],
+    [pcmPtr, numSamplesPerChannel, channels, sampleRate, mode, quality, nominalBitrate, outLenPtr]
   );
 
   if (oggPtr === 0) {

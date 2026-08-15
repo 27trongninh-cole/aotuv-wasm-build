@@ -44,8 +44,17 @@ static void bb_append(ByteBuffer *bb, const unsigned char *src, long len) {
  * num_samples:  số sample PER CHANNEL (không phải tổng số int16)
  * channels:     1 hoặc 2
  * sample_rate:  vd 44100, 48000
- * quality:      -0.1 .. 1.0 (thang VBR của Vorbis, giống -q của oggenc)
+ * mode:         0 = khởi tạo theo QUALITY (vorbis_encode_init_vbr, dùng tham số "quality")
+ *               1 = khởi tạo theo BITRATE quản lý (vorbis_encode_init, dùng tham số "nominal_bitrate")
+ * quality:      -0.1 .. 1.0 — chỉ dùng khi mode=0
+ * nominal_bitrate: bps (vd 128000 = 128kbps) — chỉ dùng khi mode=1
  * out_len:      [out] độ dài buffer .ogg trả về
+ *
+ * Lý do có 2 chế độ: libvorbis/aoTuV chọn bảng codebook cố định khác nhau
+ * tùy theo API khởi tạo được gọi (VBR theo quality vs ABR theo bitrate cụ
+ * thể), dù nghe "chất lượng tương đương". Nếu thư viện packed_codebooks
+ * (dùng để build .wem) được tạo bằng chế độ bitrate quản lý (mode=1) thay
+ * vì theo quality (mode=0), thì chỉ mode=1 mới ra đúng codebook khớp.
  *
  * return: con trỏ buffer .ogg (do hàm này malloc — JS phải gọi free() qua
  *         Module._free() sau khi copy dữ liệu ra, tránh leak memory trong wasm heap)
@@ -55,7 +64,9 @@ unsigned char *aotuv_encode_wav_to_ogg(
     int num_samples,
     int channels,
     long sample_rate,
+    int mode,
     float quality,
+    long nominal_bitrate,
     int *out_len
 ) {
     ogg_stream_state os;
@@ -72,9 +83,19 @@ unsigned char *aotuv_encode_wav_to_ogg(
 
     vorbis_info_init(&vi);
 
-    /* vorbis_encode_init_vbr là API chuẩn của libvorbisenc, aoTuV không đổi
-       chữ ký hàm này -- chỉ đổi phần lõi tâm lý âm học (psychoacoustic) bên trong. */
-    if (vorbis_encode_init_vbr(&vi, channels, (long)sample_rate, quality) != 0) {
+    int init_result;
+    if (mode == 1) {
+        /* Khởi tạo theo bitrate quản lý (ABR). -1 = không giới hạn max/min,
+           chỉ ràng buộc nominal. Đây là API "vorbis_encode_init" gốc của
+           libvorbisenc, không đổi bởi patch aoTuV. */
+        init_result = vorbis_encode_init(&vi, channels, (long)sample_rate, -1, nominal_bitrate, -1);
+    } else {
+        /* vorbis_encode_init_vbr là API chuẩn của libvorbisenc, aoTuV không đổi
+           chữ ký hàm này -- chỉ đổi phần lõi tâm lý âm học (psychoacoustic) bên trong. */
+        init_result = vorbis_encode_init_vbr(&vi, channels, (long)sample_rate, quality);
+    }
+
+    if (init_result != 0) {
         vorbis_info_clear(&vi);
         free(out.data);
         *out_len = 0;
